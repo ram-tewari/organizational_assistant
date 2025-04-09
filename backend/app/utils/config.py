@@ -15,3 +15,9 @@ Base = declarative_base()
 
 # Create a session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+class Settings:
+    # Brightspace Defaults
+    BRIGHTSPACE_LE_VERSION = "1.48"
+    BRIGHTSPACE_DEFAULT_DOMAIN = "https://purdue.brightspace.com"
