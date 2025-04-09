@@ -2,7 +2,134 @@
 
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any
-from backend.app.utils.database import SessionLocal, PomodoroSession, PomodoroChallenge
+from backend.app.utils.database import SessionLocal, PomodoroSession, PomodoroChallenge, Task, Subtask
+from sqlalchemy.orm import Session
+import math
+
+
+def generate_task_schedules(
+        task_id: int,
+        task_length: int,
+        due_date: datetime,
+        priority: str,
+        subtasks: List[str],
+        db: Session
+) -> List[Dict[str, Any]]:
+    """
+    Generate 3 different schedule options for completing a task using Pomodoro technique.
+    Each schedule breaks down the task into manageable Pomodoro sessions.
+    """
+    # Calculate available time until deadline
+    now = datetime.utcnow()
+    total_available_hours = (due_date - now).total_seconds() / 3600
+
+    # Determine Pomodoro session length based on priority
+    if priority == "high":
+        work_duration = 50  # 50-minute focus sessions for high priority
+        break_duration = 10
+    else:
+        work_duration = 25  # Standard 25-minute sessions
+        break_duration = 5
+
+    # Calculate total Pomodoro sessions needed
+    total_sessions = math.ceil(task_length * 60 / work_duration)
+
+    # Generate 3 schedule options
+    options = []
+
+    # Option 1: Intensive (complete as soon as possible)
+    intensive_sessions = min(total_sessions, 4)  # Max 4 sessions per day
+    intensive_days = math.ceil(total_sessions / intensive_sessions)
+    option1 = {
+        "id": 1,
+        "name": "Intensive Schedule",
+        "description": f"Complete in {intensive_days} days with {intensive_sessions} sessions per day",
+        "sessions_per_day": intensive_sessions,
+        "schedule": []
+    }
+
+    current_day = now.date()
+    sessions_remaining = total_sessions
+    while sessions_remaining > 0:
+        day_sessions = min(intensive_sessions, sessions_remaining)
+        option1["schedule"].append({
+            "date": current_day.isoformat(),
+            "sessions": day_sessions,
+            "session_length": work_duration,
+            "break_length": break_duration
+        })
+        sessions_remaining -= day_sessions
+        current_day += timedelta(days=1)
+
+    options.append(option1)
+
+    # Option 2: Balanced (even distribution)
+    balanced_days = max(3, math.ceil(total_available_hours / 24 * 0.6))  # Use 60% of available time
+    balanced_sessions = math.ceil(total_sessions / balanced_days)
+    option2 = {
+        "id": 2,
+        "name": "Balanced Schedule",
+        "description": f"Complete in {balanced_days} days with {balanced_sessions} sessions per day",
+        "sessions_per_day": balanced_sessions,
+        "schedule": []
+    }
+
+    current_day = now.date()
+    sessions_remaining = total_sessions
+    while sessions_remaining > 0:
+        day_sessions = min(balanced_sessions, sessions_remaining)
+        option2["schedule"].append({
+            "date": current_day.isoformat(),
+            "sessions": day_sessions,
+            "session_length": work_duration,
+            "break_length": break_duration
+        })
+        sessions_remaining -= day_sessions
+        current_day += timedelta(days=1)
+
+    options.append(option2)
+
+    # Option 3: Relaxed (minimum daily commitment)
+    relaxed_sessions = max(1, math.floor(total_sessions / total_available_hours * 8))  # About 1-2 sessions per day
+    relaxed_days = math.ceil(total_sessions / relaxed_sessions)
+    option3 = {
+        "id": 3,
+        "name": "Relaxed Schedule",
+        "description": f"Complete in {relaxed_days} days with {relaxed_sessions} sessions per day",
+        "sessions_per_day": relaxed_sessions,
+        "schedule": []
+    }
+
+    current_day = now.date()
+    sessions_remaining = total_sessions
+    while sessions_remaining > 0:
+        day_sessions = min(relaxed_sessions, sessions_remaining)
+        option3["schedule"].append({
+            "date": current_day.isoformat(),
+            "sessions": day_sessions,
+            "session_length": work_duration,
+            "break_length": break_duration
+        })
+        sessions_remaining -= day_sessions
+        current_day += timedelta(days=1)
+
+    options.append(option3)
+
+    # If subtasks exist, distribute them across sessions
+    if subtasks:
+        for option in options:
+            subtask_idx = 0
+            for day in option["schedule"]:
+                day["subtasks"] = []
+                for _ in range(day["sessions"]):
+                    if subtask_idx < len(subtasks):
+                        day["subtasks"].append(subtasks[subtask_idx])
+                        subtask_idx += 1
+
+    return options
+
+
+# [Keep all existing functions below this point...]
 
 def start_pomodoro_session(
     user_id: int,

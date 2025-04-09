@@ -5,15 +5,14 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from backend.app.utils.database import SessionLocal, Task, Subtask, TaskTemplate, TaskPriority
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from backend.app.utils.scheduler import schedule_reminder
 from backend.app.utils.ai_enhancements import train_priority_model, predict_task_priority
+from backend.app.utils.pomodoro_utils import generate_task_schedules
 import json
 
-# Create a router for task-related endpoints
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
-# Dependency to get the database session
 def get_db():
     db = SessionLocal()
     try:
@@ -21,20 +20,17 @@ def get_db():
     finally:
         db.close()
 
-# Train the priority model when the application starts
-priority_model = train_priority_model()
-
-# Pydantic models for request validation
 class TaskCreateRequest(BaseModel):
     title: str
     description: str
     priority: Optional[TaskPriority] = None
     due_date: datetime
     task_length: Optional[int] = None
+    subtasks: Optional[List[str]] = None
     reminder_enabled: Optional[bool] = False
     reminder_time: Optional[datetime] = None
-    recurrence: Optional[str] = None  # New field for recurring tasks
-    template_id: Optional[int] = None  # New field for task templates
+    recurrence: Optional[str] = None
+    template_id: Optional[int] = None
 
 class TaskUpdateRequest(BaseModel):
     title: str
@@ -43,7 +39,16 @@ class TaskUpdateRequest(BaseModel):
     due_date: datetime
     reminder_enabled: Optional[bool] = False
     reminder_time: Optional[datetime] = None
-    recurrence: Optional[str] = None  # New field for recurring tasks
+    recurrence: Optional[str] = None
+
+class TaskResponse(BaseModel):
+    id: int
+    title: str
+    description: str
+    priority: str
+    due_date: datetime
+    status: str
+    user_id: Optional[int] = None
 
 class SubtaskCreateRequest(BaseModel):
     title: str
@@ -55,37 +60,45 @@ class TaskDependencyRequest(BaseModel):
 class TaskTemplateCreateRequest(BaseModel):
     title: str
     description: str
-    subtasks: List[str]  # List of subtask titles
+    subtasks: List[str]
 
-# Create a new task
-@router.post("/")
-def create_task(request: TaskCreateRequest, user_email: str = "user@example.com", db: Session = Depends(get_db)):
-    """
-    Create a new task and schedule a reminder if enabled.
-    If no priority is provided, use AI to suggest a priority.
-    """
+class ScheduleOption(BaseModel):
+    id: int
+    name: str
+    description: str
+    sessions_per_day: int
+    schedule: List[Dict[str, Any]]
+
+class TaskCreateResponse(BaseModel):
+    message: str
+    task: TaskResponse
+    scheduling_options: List[ScheduleOption]
+
+@router.post("/", response_model=TaskCreateResponse)
+def create_task(
+    request: TaskCreateRequest,
+    db: Session = Depends(get_db)
+):
     try:
-        # If no priority is provided, task_length is required
         if request.priority is None and request.task_length is None:
             raise HTTPException(
                 status_code=400,
                 detail="task_length is required when priority is not provided",
             )
 
-        # Calculate days until deadline
         days_until_deadline = (request.due_date - datetime.utcnow()).days
 
-        # If no priority is provided, use AI to predict it
         if request.priority is None:
             predicted_priority = predict_task_priority(
-                priority_model, days_until_deadline, request.task_length
+                train_priority_model(),
+                days_until_deadline,
+                request.task_length
             )
             priority_map = {"high": TaskPriority.HIGH, "medium": TaskPriority.MEDIUM, "low": TaskPriority.LOW}
             priority = priority_map[predicted_priority]
         else:
             priority = request.priority
 
-        # Create the task
         task = Task(
             title=request.title,
             description=request.description,
@@ -95,18 +108,45 @@ def create_task(request: TaskCreateRequest, user_email: str = "user@example.com"
             reminder_time=request.reminder_time,
             recurrence=request.recurrence,
             template_id=request.template_id,
+            status="pending"
         )
         db.add(task)
         db.commit()
         db.refresh(task)
 
-        # Schedule a reminder if enabled
-        if request.reminder_enabled and request.reminder_time:
-            schedule_reminder(task.id, user_email, request.reminder_time)
+        if request.subtasks:
+            for subtask_title in request.subtasks:
+                subtask = Subtask(title=subtask_title, task_id=task.id)
+                db.add(subtask)
+            db.commit()
 
-        return {"message": "Task created successfully", "task_id": task.id, "priority": priority.value}
+        schedules = generate_task_schedules(
+            task_id=task.id,
+            task_length=request.task_length or 1,
+            due_date=request.due_date,
+            priority=priority.value,
+            subtasks=request.subtasks or [],
+            db=db
+        )
+
+        if request.reminder_enabled and request.reminder_time:
+            schedule_reminder(task.id, "user@example.com", request.reminder_time)
+
+        return {
+            "message": "Task created successfully",
+            "task": {
+                "id": task.id,
+                "title": task.title,
+                "description": task.description,
+                "priority": task.priority.value,
+                "due_date": task.due_date,
+                "status": task.status,
+                "user_id": task.user_id
+            },
+            "scheduling_options": schedules
+        }
     except HTTPException as e:
-        raise e  # Re-raise HTTPException to return the correct status code
+        raise e
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

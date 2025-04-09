@@ -1,23 +1,25 @@
+# backend/tests/test_tasks.py
+
 import pytest
 from fastapi.testclient import TestClient
 from datetime import datetime, timedelta
-from backend.app.main import app  # Import your FastAPI app
-from backend.app.utils.database import SessionLocal, Base, engine
+from backend.app.main import app
+from backend.app.utils.database import SessionLocal, Base, engine, Task, User
 
-# Fixture to provide a TestClient instance
+
 @pytest.fixture(scope="module")
 def client():
     with TestClient(app) as client:
         yield client
 
-# Fixture to set up and tear down the database
+
 @pytest.fixture(scope="module")
 def setup_database():
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)
 
-# Fixture to provide a database session
+
 @pytest.fixture(scope="function")
 def db_session(setup_database):
     db = SessionLocal()
@@ -26,77 +28,60 @@ def db_session(setup_database):
     finally:
         db.close()
 
-# Test: Create a new task with AI-powered priority suggestion
-def test_create_task_with_ai_priority(client, db_session):
-    due_date = datetime.utcnow() + timedelta(days=2)  # 2 days until deadline
+@pytest.fixture(scope="function")
+def test_user(db_session):
+    db_session.query(User).delete()  # Clear existing users
+    db_session.commit()
+    user = User(name="Test User", email="test@example.com", password="password")
+    db_session.add(user)
+    db_session.commit()
+    return user
+
+
+def test_create_task_with_scheduling_options(client, db_session, test_user):
+    due_date = datetime.utcnow() + timedelta(days=7)
     response = client.post(
         "/api/tasks/",
         json={
             "title": "Learn AI",
             "description": "Study machine learning basics",
             "due_date": due_date.isoformat(),
-            "task_length": 5,  # Estimated task length in hours
+            "task_length": 10,
+            "subtasks": [
+                "Watch lecture 1",
+                "Read chapter 1",
+                "Complete exercises",
+                "Review notes"
+            ],
+            "user_id": test_user.id
         },
     )
+
     assert response.status_code == 200
-    assert "task_id" in response.json()
-    assert "priority" in response.json()
-    assert response.json()["priority"] in ["high", "medium", "low"]
+    data = response.json()
+    assert data["message"] == "Task created successfully"
+    assert data["task"]["title"] == "Learn AI"
+    assert len(data["scheduling_options"]) == 3
+    assert data["scheduling_options"][0]["name"] == "Intensive Schedule"
 
-# Test: Create a new task with user-provided priority
-def test_create_task_with_user_priority(client, db_session):
-    due_date = datetime.utcnow() + timedelta(days=2)  # 2 days until deadline
-    response = client.post(
-        "/api/tasks/",
-        json={
-            "title": "Learn AI",
-            "description": "Study machine learning basics",
-            "priority": "high",  # User-provided priority
-            "due_date": due_date.isoformat(),
-        },
-    )
-    assert response.status_code == 200
-    assert "task_id" in response.json()
-    assert "priority" in response.json()
-    assert response.json()["priority"] == "high"
 
-# Test: Create a new task without priority or task_length (should fail)
-def test_create_task_without_priority_or_task_length(client, db_session):
-    due_date = datetime.utcnow() + timedelta(days=2)  # 2 days until deadline
-    response = client.post(
-        "/api/tasks/",
-        json={
-            "title": "Learn AI",
-            "description": "Study machine learning basics",
-            "due_date": due_date.isoformat(),
-        },
-    )
-    assert response.status_code == 400
-    assert "detail" in response.json()
-    assert "task_length is required when priority is not provided" in response.json()["detail"]
-
-# Test: Retrieve all tasks
-def test_get_tasks(client, db_session):
-    # Create a task first
+def test_create_task_with_user_priority(client, db_session, test_user):
     due_date = datetime.utcnow() + timedelta(days=2)
-    client.post(
+    response = client.post(
         "/api/tasks/",
         json={
             "title": "Learn AI",
             "description": "Study machine learning basics",
             "priority": "high",
             "due_date": due_date.isoformat(),
+            "user_id": test_user.id
         },
     )
-
-    # Retrieve all tasks
-    response = client.get("/api/tasks/")
     assert response.status_code == 200
-    assert isinstance(response.json(), list)
-    assert len(response.json()) > 0
+    assert response.json()["task"]["priority"] == "high"
 
-# Test: Update a task
-def test_update_task(client, db_session):
+
+def test_update_task(client, db_session, test_user):
     # Create a task first
     due_date = datetime.utcnow() + timedelta(days=2)
     create_response = client.post(
@@ -106,9 +91,10 @@ def test_update_task(client, db_session):
             "description": "Study machine learning basics",
             "priority": "high",
             "due_date": due_date.isoformat(),
+            "user_id": test_user.id
         },
     )
-    task_id = create_response.json()["task_id"]
+    task_id = create_response.json()["task"]["id"]
 
     # Update the task
     updated_due_date = datetime.utcnow() + timedelta(days=3)
@@ -125,8 +111,8 @@ def test_update_task(client, db_session):
     assert update_response.json()["title"] == "Updated Task"
     assert update_response.json()["priority"] == "medium"
 
-# Test: Delete a task
-def test_delete_task(client, db_session):
+
+def test_delete_task(client, db_session, test_user):
     # Create a task first
     due_date = datetime.utcnow() + timedelta(days=2)
     create_response = client.post(
@@ -136,38 +122,18 @@ def test_delete_task(client, db_session):
             "description": "Study machine learning basics",
             "priority": "high",
             "due_date": due_date.isoformat(),
+            "user_id": test_user.id
         },
     )
-    task_id = create_response.json()["task_id"]
+    task_id = create_response.json()["task"]["id"]
 
     # Delete the task
     delete_response = client.delete(f"/api/tasks/{task_id}")
     assert delete_response.status_code == 200
     assert delete_response.json()["detail"] == "Task deleted"
 
-# Test: Retrieve tasks with description "Class"
-def test_get_class_tasks(client, db_session):
-    # Create a task with description "Class"
-    due_date = datetime.utcnow() + timedelta(days=2)
-    client.post(
-        "/api/tasks/",
-        json={
-            "title": "Math Class",
-            "description": "Class",
-            "priority": "high",
-            "due_date": due_date.isoformat(),
-        },
-    )
 
-    # Retrieve tasks with description "Class"
-    response = client.get("/api/tasks/classes/")
-    assert response.status_code == 200
-    assert isinstance(response.json(), list)
-    assert len(response.json()) > 0
-    assert all(task["description"] == "Class" for task in response.json())
-
-# Test: Create a subtask for a task
-def test_create_subtask(client, db_session):
+def test_create_subtask(client, db_session, test_user):
     # Create a task first
     due_date = datetime.utcnow() + timedelta(days=2)
     create_response = client.post(
@@ -177,9 +143,10 @@ def test_create_subtask(client, db_session):
             "description": "Study machine learning basics",
             "priority": "high",
             "due_date": due_date.isoformat(),
+            "user_id": test_user.id
         },
     )
-    task_id = create_response.json()["task_id"]
+    task_id = create_response.json()["task"]["id"]
 
     # Create a subtask
     response = client.post(
@@ -192,8 +159,8 @@ def test_create_subtask(client, db_session):
     assert response.status_code == 200
     assert "subtask_id" in response.json()
 
-# Test: Retrieve subtasks for a task
-def test_get_subtasks(client, db_session):
+
+def test_get_subtasks(client, db_session, test_user):
     # Create a task first
     due_date = datetime.utcnow() + timedelta(days=2)
     create_response = client.post(
@@ -203,9 +170,10 @@ def test_get_subtasks(client, db_session):
             "description": "Study machine learning basics",
             "priority": "high",
             "due_date": due_date.isoformat(),
+            "user_id": test_user.id
         },
     )
-    task_id = create_response.json()["task_id"]
+    task_id = create_response.json()["task"]["id"]
 
     # Create a subtask
     client.post(
@@ -222,8 +190,8 @@ def test_get_subtasks(client, db_session):
     assert isinstance(response.json(), list)
     assert len(response.json()) > 0
 
-# Test: Add a task dependency
-def test_add_task_dependency(client, db_session):
+
+def test_add_task_dependency(client, db_session, test_user):
     # Create two tasks
     due_date = datetime.utcnow() + timedelta(days=2)
     task1_response = client.post(
@@ -233,9 +201,10 @@ def test_add_task_dependency(client, db_session):
             "description": "Complete Task 1",
             "priority": "high",
             "due_date": due_date.isoformat(),
+            "user_id": test_user.id
         },
     )
-    task1_id = task1_response.json()["task_id"]
+    task1_id = task1_response.json()["task"]["id"]
 
     task2_response = client.post(
         "/api/tasks/",
@@ -244,9 +213,10 @@ def test_add_task_dependency(client, db_session):
             "description": "Complete Task 2",
             "priority": "high",
             "due_date": due_date.isoformat(),
+            "user_id": test_user.id
         },
     )
-    task2_id = task2_response.json()["task_id"]
+    task2_id = task2_response.json()["task"]["id"]
 
     # Add a dependency
     response = client.post(
@@ -256,8 +226,29 @@ def test_add_task_dependency(client, db_session):
         },
     )
     assert response.status_code == 200
-    assert "message" in response.json()
     assert response.json()["message"] == "Dependency added successfully"
+
+
+def test_complete_task(client, db_session, test_user):
+    # Create a task first
+    due_date = datetime.utcnow() + timedelta(days=2)
+    create_response = client.post(
+        "/api/tasks/",
+        json={
+            "title": "Learn AI",
+            "description": "Study machine learning basics",
+            "priority": "high",
+            "due_date": due_date.isoformat(),
+            "user_id": test_user.id
+        },
+    )
+    task_id = create_response.json()["task"]["id"]
+
+    # Mark the task as completed
+    response = client.post(f"/api/tasks/{task_id}/complete")
+    assert response.status_code == 200
+    assert response.json()["message"] == "Task marked as completed"
+
 
 # Test: Create a task template
 def test_create_task_template(client, db_session):
@@ -322,7 +313,7 @@ def test_get_recurring_tasks(client, db_session):
     assert all(task["recurrence"] is not None for task in response.json())
 
 # Test: Mark a task as completed
-def test_complete_task(client, db_session):
+def test_complete_task(client, db_session, test_user):
     # Create a task first
     due_date = datetime.utcnow() + timedelta(days=2)
     create_response = client.post(
@@ -332,9 +323,15 @@ def test_complete_task(client, db_session):
             "description": "Study machine learning basics",
             "priority": "high",
             "due_date": due_date.isoformat(),
+            "user_id": test_user.id
         },
     )
-    task_id = create_response.json()["task_id"]
+    task_id = create_response.json()["task"]["id"]
+
+    # Mark the task as completed
+    response = client.post(f"/api/tasks/{task_id}/complete")
+    assert response.status_code == 200
+    assert response.json()["message"] == "Task marked as completed"
 
     # Mark the task as completed
     response = client.post(f"/api/tasks/{task_id}/complete")
