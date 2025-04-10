@@ -1,9 +1,11 @@
-# backend/app/utils/scheduler.py
+# backend_test/app/utils/scheduler.py
 
 from apscheduler.schedulers.background import BackgroundScheduler
+#from backend_test.app.utils.brightspace_integration import BrightspaceIntegration
 from backend.app.utils.email_utils import send_email
 from backend.app.utils.database import SessionLocal, Task
 from datetime import datetime, timedelta
+#from backend_test.app.utils.config import settings
 
 # Initialize the scheduler
 scheduler = BackgroundScheduler()
@@ -41,3 +43,20 @@ def schedule_pomodoro_reminders(sessions):
             user_email=session["user_email"],
             reminder_time=session["start"] - timedelta(minutes=15)
         )
+
+
+'''def schedule_brightspace_sync(user_id: int, course_id: str, auth_token: str):
+    """Schedule regular Brightspace sync"""
+    brightspace = BrightspaceIntegration(
+        domain=settings.BRIGHTSPACE_DEFAULT_DOMAIN,
+        access_token=auth_token
+    )
+
+    # Run daily at 8 AM
+    scheduler.add_job(
+        brightspace.import_to_system,
+        'cron',
+        hour=8,
+        args=[course_id, user_id],
+        id=f"brightspace_sync_{user_id}_{course_id}"
+    )'''
