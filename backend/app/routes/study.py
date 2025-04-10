@@ -1,4 +1,4 @@
-# backend/app/routes/study.py
+# backend_test/app/routes/study.py
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session

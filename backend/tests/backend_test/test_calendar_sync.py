@@ -1,4 +1,4 @@
-# backend/tests/test_calendar_sync.py
+# backend_test/tests/test_calendar_sync.py
 
 import pytest
 from fastapi.testclient import TestClient

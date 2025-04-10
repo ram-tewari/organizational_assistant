@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const API_URL = "http://localhost:8000/api/habits-goals/habits"; // Update with your backend URL
+const API_URL = "http://localhost:8000/api/habits-goals/habits"; // Update with your backend_test URL
 
 export const fetchHabits = async () => {
   const response = await axios.get(API_URL);

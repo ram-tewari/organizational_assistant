@@ -1,4 +1,4 @@
-# backend/tests/test_pomodoro.py
+# backend_test/tests/test_pomodoro.py
 
 import pytest
 from fastapi.testclient import TestClient

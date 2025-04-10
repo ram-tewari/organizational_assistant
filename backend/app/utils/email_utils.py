@@ -1,4 +1,4 @@
-# backend/app/utils/email_utils.py
+# backend_test/app/utils/email_utils.py
 
 import smtplib
 from email.mime.text import MIMEText

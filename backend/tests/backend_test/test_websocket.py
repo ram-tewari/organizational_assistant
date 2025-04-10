@@ -1,4 +1,4 @@
-# backend/tests/test_websocket.py
+# backend_test/tests/test_websocket.py
 
 import pytest
 from fastapi.testclient import TestClient
